@@ -238,6 +238,11 @@ input[type=time]::-webkit-date-and-time-value,input[type=date]::-webkit-date-and
 dialog:not([open]){display:none}
 dialog[open]{position:fixed;inset:0;margin:auto;height:fit-content;max-width:calc(100vw - 24px);overflow:auto;z-index:90}
 
+.backup{padding:16px 18px;margin-top:6px}
+.backup p{margin:0 0 12px;font-size:14px}
+.backup .row{display:flex;gap:10px;flex-wrap:wrap}
+.backup input[type=file]{display:none}
+
 /* ---------- PDF / print ---------- */
 .nav-btn{flex:none;margin-left:auto;border:var(--bw) solid var(--ink);border-radius:999px;background:var(--red);color:#fff;font-weight:700;font-size:14px;padding:2px 14px;cursor:pointer;white-space:nowrap}
 .print-only{display:none}
@@ -490,6 +495,18 @@ dialog[open]{position:fixed;inset:0;margin:auto;height:fit-content;max-width:cal
   <button class="btn" id="addHotel" type="button">＋ 新增住宿</button>
 </section>
 
+<section id="backup" aria-label="資料備份">
+  <h2 class="h2">資料備份</h2>
+  <div class="card backup">
+    <p>行程只存在這個瀏覽器裡。換手機、清除瀏覽資料前，先按「匯出備份」存成檔案；之後在新裝置按「匯入備份」就能還原。</p>
+    <div class="row">
+      <button type="button" class="btn" id="bkExport">匯出備份</button>
+      <button type="button" class="btn ghost" id="bkImport">匯入備份</button>
+      <input type="file" id="bkFile" accept=".json,application/json">
+    </div>
+  </div>
+</section>
+
 </main>
 
 <footer>
@@ -510,7 +527,7 @@ dialog[open]{position:fixed;inset:0;margin:auto;height:fit-content;max-width:cal
     <h3 id="cfmMsg">確定要刪除嗎？</h3>
     <div class="dlg-act">
       <button type="button" class="btn ghost" id="cfmNo">取消</button>
-      <button type="button" class="btn red" id="cfmYes">刪除</button>
+      <button type="button" class="btn red" id="cfmYes">確定</button>
     </div>
   </form>
 </dialog>
@@ -937,7 +954,7 @@ async function saveFile(name,blob){
   var dl=null;
   try{dl=(window.claude&&window.claude.use)?await window.claude.use("downloads"):null}catch(e){dl=null}
   if(dl){
-    try{await dl.save({filename:name,data:blob});toast("PDF 已儲存");return}
+    try{await dl.save({filename:name,data:blob});toast("已儲存");return}
     catch(e){
       if(e&&e.code==="declined"){toast("已取消儲存");return}
       if(e&&e.code==="rate_limited"){toast("請稍後再試一次");return}
@@ -946,7 +963,7 @@ async function saveFile(name,blob){
   var url=URL.createObjectURL(blob),a=document.createElement("a");
   a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
   setTimeout(function(){URL.revokeObjectURL(url)},5000);
-  toast("已開始下載 PDF");
+  toast("已開始下載");
 }
 async function exportPdf(){
   if(busy)return;busy=true;
@@ -964,6 +981,47 @@ async function exportPdf(){
 }
 document.querySelectorAll("[data-pdf]").forEach(function(b){b.addEventListener("click",exportPdf)});
 window.addEventListener("beforeprint",buildPrint);
+
+/* ---------- backup / restore ---------- */
+function fillFlights(){
+  document.querySelectorAll("[data-f]").forEach(function(inp){
+    var k=inp.dataset.f.split("."),g=k[0],f=k[1];
+    inp.value=(state.flights[g]&&state.flights[g][f])||"";
+  });
+}
+function pad2(x){return x<10?"0"+x:""+x}
+$("#bkExport").addEventListener("click",async function(){
+  var d=new Date();
+  var name="東京小旅行備份_"+d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+".json";
+  var payload={app:"tokyo-trip-2027",version:1,exportedAt:d.toISOString(),data:state};
+  var blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+  try{await saveFile(name,blob)}catch(e){toast("匯出失敗，請再試一次")}
+});
+$("#bkImport").addEventListener("click",function(){$("#bkFile").click()});
+$("#bkFile").addEventListener("change",function(e){
+  var f=e.target.files&&e.target.files[0];e.target.value="";
+  if(!f)return;
+  var r=new FileReader();
+  r.onerror=function(){toast("讀取檔案失敗")};
+  r.onload=function(){
+    var obj=null;
+    try{obj=JSON.parse(r.result)}catch(x){obj=null}
+    var d=obj&&obj.app==="tokyo-trip-2027"&&obj.data&&typeof obj.data==="object"?obj.data:null;
+    if(!d){toast("這不是有效的備份檔");return}
+    askConfirm("匯入會覆蓋目前的行程、待辦與住宿，確定嗎？").then(function(ok){
+      if(!ok)return;
+      state.flights=Object.assign({out:{},back:{}},d.flights&&typeof d.flights==="object"?d.flights:{});
+      state.items=d.items&&typeof d.items==="object"&&!Array.isArray(d.items)?d.items:{};
+      state.todos=Array.isArray(d.todos)?d.todos:[];
+      state.hotels=Array.isArray(d.hotels)?d.hotels:[];
+      save();fillFlights();renderTabs();renderDay(false);renderTodo();renderHotels();
+      toast("備份已還原");
+    });
+  };
+  r.readAsText(f);
+});
+/* ask the browser to keep this site's data from being evicted */
+try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(function(){})}catch(e){}
 
 /* ---------- motion polish ---------- */
 (function(){
